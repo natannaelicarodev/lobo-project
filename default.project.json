@@ -16,6 +16,11 @@
     },
 
     "StarterPlayer": {
+      "$properties": {
+        "LoadCharacterAppearance": false,
+        "CameraMinZoomDistance": 0.5,
+        "CameraMaxZoomDistance": 20
+      },
       "StarterPlayerScripts": {
         "Client": {
           "$path": "src/client"
