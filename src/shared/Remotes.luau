@@ -10,6 +10,7 @@ local Remotes = {}
 
 Remotes.Names = {
 	RequestInteraction = "RequestInteraction",
+	RequestDrop = "RequestDrop",
 }
 
 local function getFolder(): Instance

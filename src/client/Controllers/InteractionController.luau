@@ -18,6 +18,11 @@ local ACTION_NAME = "Interact"
 
 local InteractionController = {}
 
+-- Fires (typeName: string) after the server accepted an interaction; used for feedback
+-- such as animations. Only the server's answer triggers it.
+local succeeded = Instance.new("BindableEvent")
+InteractionController.Succeeded = succeeded.Event
+
 local player = Players.LocalPlayer
 local requestRemote: RemoteFunction
 local candidates: { [Instance]: boolean } = {}
@@ -35,12 +40,28 @@ local function getLivingRoot(): BasePart?
 	return root
 end
 
-local function isUsableFrom(instance: Instance, root: BasePart): boolean
-	if not candidates[instance] or not Interactable.isInteractable(instance) or not Interactable.getTypeName(instance) then
-		return false
+-- Distance from the player to the object if it can be offered right now, otherwise nil.
+local function usableDistance(instance: Instance, root: BasePart): number?
+	if not candidates[instance] or not Interactable.isInteractable(instance) then
+		return nil
+	end
+	local typeName = Interactable.getTypeName(instance)
+	if not typeName then
+		return nil
+	end
+	if InteractionConfig.Types[typeName].HideWhileCarrying and player:GetAttribute("CarryingBox") == true then
+		return nil
 	end
 	local position = Interactable.getPosition(instance)
-	return position ~= nil and (position - root.Position).Magnitude <= Interactable.getMaxDistance(instance)
+	local distance = position and (position - root.Position).Magnitude
+	if not distance or distance > Interactable.getMaxDistance(instance) then
+		return nil
+	end
+	return distance
+end
+
+local function isUsableFrom(instance: Instance, root: BasePart): boolean
+	return usableDistance(instance, root) ~= nil
 end
 
 -- The tagged instance hit by a ray from the centre of the screen, if it is in range.
@@ -82,15 +103,10 @@ local function findTarget(): Instance?
 	local best: Instance? = nil
 	local bestDistance = math.huge
 	for instance in candidates do
-		if Interactable.isInteractable(instance) and Interactable.getTypeName(instance) then
-			local position = Interactable.getPosition(instance)
-			if position then
-				local distance = (position - root.Position).Magnitude
-				if distance <= Interactable.getMaxDistance(instance) and distance < bestDistance then
-					best = instance
-					bestDistance = distance
-				end
-			end
+		local distance = usableDistance(instance, root)
+		if distance and distance < bestDistance then
+			best = instance
+			bestDistance = distance
 		end
 	end
 	return best
@@ -101,6 +117,8 @@ local function sendRequest()
 	if requestPending or not target then
 		return
 	end
+	-- read before the request: the target may be gone afterwards (e.g. emptied box)
+	local typeName = Interactable.getTypeName(target)
 	requestPending = true
 	local ok, result = pcall(requestRemote.InvokeServer, requestRemote, target)
 	requestPending = false
@@ -112,6 +130,9 @@ local function sendRequest()
 	local message = result.message
 	if typeof(message) == "string" and message ~= "" then
 		FeedbackToast.show(message, result.ok == true)
+	end
+	if result.ok == true and typeName then
+		succeeded:Fire(typeName)
 	end
 end
 

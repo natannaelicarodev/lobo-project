@@ -5,14 +5,425 @@
 
 ## Etapa atual
 
--   Número: 02 --- Personagem e interação
--   Estado: Concluída (aguardando validação do usuário para iniciar a Etapa 03)
+-   Número: 03 --- Produtos, transporte e física
+-   Estado: Concluída (aguardando validação do usuário para iniciar a Etapa 04)
 
 ## Histórico
 
 -   Etapa 01 --- Auditoria e base: concluída. O protótipo antigo da
     padaria foi removido a pedido do usuário.
--   Etapa 02 --- Personagem e interação: concluída (detalhes abaixo).
+-   Etapa 02 --- Personagem e interação: concluída e aprovada. Commits
+    `edf1d82` e `69c12f0`, publicados na branch
+    `feat/etapa-02-personagem-interacao`.
+-   Etapa 03 --- Produtos, transporte e física: concluída (seção abaixo).
+
+## Etapa 03 --- Produtos, transporte e física
+
+### Implementado
+
+-   **Dados centralizados** em `src/shared/ProductConfig.luau`:
+    -   Produto `Apple` (Maçã, 6 por caixa).
+    -   Caixa (tamanho e cor).
+    -   Prateleira (capacidade padrão 12).
+    -   Depósito (4 caixas iniciais).
+    -   Carregar: posição na mão, distância de soltar, sondas do raycast,
+        intervalo mínimo entre pedidos, zoom da câmera e teclas G/B.
+-   **`ProductService`:** cria as caixas (atributos `ProductId`, `Units`;
+    tag `Interactable`, tipo `ProductBox`) nos `BoxSpawn` do
+    `Workspace.Store.StockRoom`. Mostra as unidades restantes em cima da
+    caixa. **Recupera caixas perdidas:** se a caixa sai do Workspace sem
+    ser de propósito (por exemplo, cai do mapa), uma caixa nova com as
+    mesmas unidades aparece no depósito.
+-   **`CarryService`** (estratégia física):
+    -   **No chão:** física simulada pelo servidor
+        (`SetNetworkOwner(nil)`). O cliente não consegue mover a caixa.
+    -   **Na mão:** solda com o `HumanoidRootPart`, sem colisão e sem
+        massa. A tag `Interactable` é removida, então ninguém mais
+        consegue pegar a mesma caixa.
+    -   **Ao soltar:** o servidor escolhe a posição (3 studs à frente,
+        raio contra parede, raio até o chão). O cliente só pede "soltar",
+        sem mandar posição.
+    -   **Morte, respawn ou saída do jogador:** a caixa é solta
+        automaticamente.
+    -   **Remote `RequestDrop`:** limitado por frequência.
+-   **`ShelfService`:**
+    -   A prateleira (BasePart com tag e `ProductId`, `Capacity`) guarda
+        o atributo `Stock`.
+    -   **Repor:** move `min(espaço, unidades da caixa)` da caixa na mão
+        para a prateleira. Caixa vazia é descartada. A operação não tem
+        `yield`, então não há duplicação mesmo com dois jogadores ao
+        mesmo tempo.
+    -   Recusa: sem caixa, produto diferente, prateleira cheia.
+    -   Exibição provisória de uma esfera por unidade. A dica mostra
+        "Prateleira de maçãs (x/12)".
+-   **Handlers de interação:** `ProductBox` (pegar) e `Shelf` (repor).
+-   **Cliente:**
+    -   `CarryController`: soltar com G, ButtonB ou o botão "Soltar" no
+        touch, só enquanto carrega. Rótulo "Carregando caixa • [G]
+        soltar". A câmera aproxima (zoom máximo 10) enquanto carrega e
+        volta a 20 depois.
+    -   `InteractionController`: não oferece outras caixas enquanto o
+        jogador carrega uma (`HideWhileCarrying`).
+-   **Workspace PROVISÓRIO** `Workspace.Store`, com atributo
+    `Provisional`: piso do depósito, 2 `BoxSpawn`, placa "Estoque" e a
+    prateleira `AppleShelf` (bancada de madeira 6×3×2).
+-   **Áudio:** não adicionado. Não há asset de som verificado no
+    projeto, e IDs não são inventados.
+
+### Testes executados (playtest pelo MCP, 1 jogador)
+
+-   `rojo build` com exit 0. Sync: todos os scripts com o mesmo tamanho
+    dos arquivos.
+-   **Início:** 4 caixas criadas com 6 unidades, `NetworkOwner = nil`
+    (servidor).
+-   **Validações:**
+    -   Soltar sem carregar → recusado ("Você não está carregando
+        nada").
+    -   Pegar caixa perto → `Ok`, `CarryingBox = true`, `CarriedBy`
+        definido.
+    -   Pegar de novo a caixa que está na mão e dois pedidos seguidos →
+        `Invalid` (a tag foi removida). **Sem duplicação.**
+    -   Repor com a prateleira cheia → recusado.
+-   **Reposição parcial:** confirmada pelo estado do jogo. Uma caixa
+    ficou com 2 unidades depois que o usuário, jogando ao mesmo tempo,
+    repôs 4 numa prateleira com 8.
+-   **Recuperação:** uma caixa com 2 unidades foi jogada abaixo de
+    `FallenPartsDestroyHeight`. Ela foi destruída e uma nova com 2
+    unidades apareceu no depósito (aviso esperado no log).
+-   **Morte carregando:** a caixa foi solta 3 studs à frente da posição
+    da morte, voltou a ter a tag e ficou sem `CarriedBy`.
+    `CarryingBox = false`.
+-   **Output:** só o aviso esperado da recuperação. Nenhum erro no
+    servidor ou no cliente.
+
+### Limitações e riscos
+
+-   **Testes perturbados:** parte deles foi feita com o usuário jogando
+    no mesmo playtest, o que causou `OutOfRange` e `TooFast` em alguns
+    passos. Os casos principais foram confirmados depois, ou pelo estado
+    final do jogo.
+-   **Sem animação de segurar:** os braços não seguram a caixa (exigiria
+    uma animação; nenhum ID é inventado).
+-   ~~Caixa em cima de superfícies~~: corrigido (ver "Correção:
+    soltar perto da bancada" abaixo).
+-   **Estoque finito:** o estoque do depósito é finito (4 caixas). A
+    compra ou entrega de caixas vem com a economia (Etapa 04 ou depois).
+-   **Visuais provisórios:** caixa, maçãs e prateleira usam peças
+    simples.
+-   **Multiplayer:** ainda não testado com 2 clientes (Etapa 06).
+
+### Correção: soltar perto da bancada (validação manual da Etapa 03)
+
+-   **Problemas encontrados no código anterior** (`findDropCFrame`):
+    1.  Colado na bancada, o raio frontal batia nela a menos de 1,6 stud,
+        a distância virava 0 e a caixa era colocada **na posição do
+        próprio jogador**, e a física empurrava os dois.
+    2.  Só o centro da caixa era checado. Uma caixa de 2,2 de largura
+        podia ficar meio dentro da bancada, ou o raio do chão, que
+        começava 6 studs acima, pousava **em cima** da bancada.
+    3.  Começar o raio do chão 6 studs acima poria a caixa num teto
+        quando a loja tiver teto.
+-   **Correção** (só em `CarryService` e `ProductConfig.Carry`, sem
+    mudar as outras funções):
+    -   O servidor testa, em ordem, pontos a 3, 2,5 e 2 studs à frente e
+        nas diagonais de ±30° (`DropDistances` e `DropAngles`).
+    -   Um ponto só é aceito se tiver:
+        -   chão plano encontrado por um raio que **começa na altura do
+            jogador** (`DropMaxStepDown`, `DropMinFloorNormalY`) e que
+            **não é objeto interativo** (bancada, caixa);
+        -   linha livre do jogador até o ponto (não atravessa parede);
+        -   volume da caixa sem tocar nada sólido (`GetPartBoundsInBox`,
+            respeitando `CanCollide`, incluindo outros jogadores e
+            caixas).
+    -   Se nenhum ponto servir, **o pedido é recusado** ("Sem espaço para
+        soltar aqui...") e a caixa continua na mão.
+    -   **Morte, respawn ou saída** (`drop(player, true)`): tenta os
+        mesmos pontos e, se não houver, coloca a caixa no chão onde o
+        jogador estava.
+    -   **Autoridade do servidor mantida:** o cliente continua mandando só
+        o pedido `RequestDrop`, sem nenhum dado. A posição é calculada
+        apenas no servidor.
+-   **Testado no playtest** (raiz do personagem ancorada pelo servidor
+    em posições fixas, para o teste não depender do controle do
+    jogador):
+    1.  Colado na bancada (1,2 stud), de frente, raiz a 2,6 → `Rejected`
+        com a mensagem, a caixa continua na mão. Também recusou com a
+        raiz a 5,3 de altura (o chão encontrado era o topo da bancada,
+        interativo).
+    2.  Mesmo lugar, de costas para a bancada → `Ok`. A caixa ficou a 3
+        studs, no chão (y = 0,58), sem tocar em nada, com física do
+        servidor.
+    3.  Morte colado na bancada carregando caixa → caixa no chão onde o
+        jogador estava, sem tocar a bancada nem ficar em cima dela.
+        Encosta só no corpo do personagem morto, que some no respawn. A
+        caixa voltou a ser interativa.
+    4.  Output do servidor e do cliente sem erros.
+-   **Ainda depende de validação manual:**
+    -   Soltar com G em situações reais: perto da bancada, de lado para
+        ela, em cantos e perto das caixas do depósito. Conferir se a
+        recusa não acontece demais em lugares onde deveria caber.
+    -   Soltar com outro jogador na frente (sem teste multiplayer
+        disponível).
+
+### Animações de carregar (pedido extra antes da Etapa 04)
+
+-   **Rig analisado:** R15 com 15 `AnimationConstraint` de nomes padrão
+    (`Root`, `Waist`, `Neck`, `Right/LeftShoulder`, `Elbow`, `Wrist`,
+    `Hip`, `Knee`, `Ankle`). Pose de descanso em T. Eixos das
+    articulações = eixos do mundo (X direita, Y cima, −Z frente). A
+    malha, as texturas e a aparência não foram alteradas.
+-   **Animações criadas** (`KeyframeSequence`, autoria própria, sem
+    terceiros) pelo script `tools/animations/build_carry_animations.luau`:
+
+    | Nome | Uso | Loop | Prioridade | Duração |
+    |---|---|---|---|---|
+    | `CarryIdle` | parado carregando (braços sob a caixa, tronco levemente para trás, respiração) | sim | Action | 2,0 s |
+    | `CarryWalk` | andando carregando (passada curta, quadril balançando, braços fixos) | sim | Action | 0,9 s |
+    | `PickUp` | agacha, segura e levanta | não | Action2 | 1,0 s |
+    | `PlaceBox` | inclina e estende os braços para a prateleira | não | Action2 | 0,9 s |
+
+    -   Todas as articulações recebem pose em todos os keyframes. Assim,
+        enquanto tocam, elas **substituem por completo** a animação
+        padrão (sem membros misturados).
+    -   As duas animações únicas (Action2) tocam por cima das de
+        carregar e depois devolvem o controle a elas.
+-   **Onde ficam:**
+    -   `ReplicatedStorage.AnimationSources`: cópias para pré-visualização
+        no Studio.
+    -   `Workspace.AnimationRig_Wolf.AnimSaves`: para abrir e publicar no
+        Animation Editor. O `AnimationRig_Wolf` é uma cópia do
+        personagem, com atributo `Provisional`, e não é jogável.
+-   **Código:**
+    -   `src/shared/AnimationConfig.luau`: ID, prioridade, loop e fade de
+        cada animação. Os IDs estão **vazios** até a publicação.
+    -   `src/client/Controllers/CharacterAnimationController.luau`:
+        carregando e andando → `CarryWalk`; carregando e parado →
+        `CarryIdle`; pegar ou repor aceito pelo servidor → `PickUp` ou
+        `PlaceBox` uma vez. Usa eventos (atributo `CarryingBox`,
+        `Humanoid.Running`), sem loop por frame. As conexões são limpas
+        a cada respawn.
+    -   `InteractionController`: só ganhou o sinal `Succeeded`, disparado
+        depois da resposta positiva do servidor. O resto não mudou.
+    -   `ProductConfig.Carry.HoldOffset`: de `(0, −0.4, −2.2)` para
+        `(0, 0.1, −1.6)`, para a caixa ficar sobre as mãos (os braços do
+        modelo são curtos). Valor visual; a mecânica da Etapa 03 não
+        mudou.
+    -   **Sem ID publicado:** no Studio, o controlador registra
+        animações temporárias a partir de `AnimationSources`
+        (`KeyframeSequenceProvider:RegisterKeyframeSequence`). Fora do
+        Studio, sem ID, a animação é ignorada com um aviso no Output.
+-   **Testado no playtest (fluxo real, tecla E):**
+    1.  Pegar caixa → `PickUp` (Action2) por cima de `CarryIdle`
+        (Action), depois só `CarryIdle`.
+    2.  Andar carregando → transição para `CarryWalk`. Parar → volta a
+        `CarryIdle`.
+    3.  Repor na prateleira (com o estoque baixado para 4 pelo servidor)
+        → `PlaceBox`. A caixa esvaziou (+6, 10/12) e as animações de
+        carregar pararam, sem nada sobrando.
+    4.  Prateleira cheia (12/12): a reposição é recusada e nenhuma
+        animação toca (só toca com sucesso).
+    5.  Output do servidor e do cliente sem erros.
+    6.  Antes, com a pose aplicada e uma caixa real: as mãos ficam sob a
+        caixa, à frente do corpo (print de lado conferido).
+
+### Animações publicadas
+
+-   O usuário publicou as 4 animações ("Salvar no Roblox" no Explorador).
+    IDs colocados em `AnimationConfig.luau`:
+    -   `CarryIdle` = `rbxassetid://95929208934414`
+    -   `CarryWalk` = `rbxassetid://134787024206171`
+    -   `PickUp` = `rbxassetid://111667969637663` (versão que começa
+        agachada, duração 0,75 s)
+    -   `PlaceBox` = `rbxassetid://84980375964126`
+-   Tentativa de publicar pelo MCP: `AssetService:CreateAssetAsync`
+    respondeu "not available yet". Por isso a publicação foi manual.
+-   **Testado no playtest com os IDs publicados:**
+    -   As 4 carregam (duração 2,0 / 0,9 / 0,75 / 0,9 s).
+    -   O controlador toca os IDs publicados, não as cópias temporárias.
+    -   Pegar (E): `PickUp` + `CarryIdle`.
+    -   Andar: `CarryWalk` a 16 de velocidade; parar: `CarryIdle`.
+    -   Repor (E): `PlaceBox`, "+6 maçãs (8/12)", e a caixa vazia foi
+        descartada.
+    -   Output do servidor e do cliente sem erros.
+-   `AnimationRig_Wolf` movido do Workspace para o `ServerStorage`, para
+    não aparecer no jogo. Para editar uma animação, traga ele de volta
+    ao Workspace, abra no Animation Editor e publique de novo (o ID muda
+    se for publicado como asset novo).
+-   `ReplicatedStorage.AnimationSources` ficou só como pré-visualização,
+    caso algum ID volte a ficar vazio. Com os IDs preenchidos, não é
+    usado.
+
+### Ação manual necessária: publicar as animações (FEITO)
+
+IDs temporários só funcionam no Studio. Para funcionar no jogo publicado:
+
+1.  No Studio, aba **Avatar → Animation Editor** (ou Plugins → Animation
+    Editor).
+2.  Clique no rig **`AnimationRig_Wolf`** no Workspace.
+3.  No editor, clique em **⋯ → Load**, escolha `CarryIdle` e ajuste se
+    quiser.
+4.  **⋯ → Publish to Roblox**. Dê o nome (por exemplo, "Wolf CarryIdle"),
+    publique como **você** (o mesmo dono da experiência) e copie o ID
+    que aparecer.
+5.  Repita para `CarryWalk`, `PickUp` e `PlaceBox`.
+6.  Me envie os 4 IDs. Eu coloco em `AnimationConfig.luau` e testo de
+    novo. Antes de colar, confira no editor se o Loop e a prioridade
+    continuam como na tabela acima.
+7.  Depois de publicar, o `AnimationRig_Wolf` pode sair do Workspace
+    (mover para `ServerStorage` ou apagar).
+
+### Pendências e limitações das animações
+
+-   ~~Sem IDs publicados~~: publicados (ver acima).
+-   **Poses feitas por código:** foram conferidas por números e por um
+    print da pose parada. `CarryWalk`, `PickUp` e `PlaceBox` **não
+    foram conferidos visualmente em movimento** (a captura de tela não
+    pega animação). Pode haver deslize de pé ao agachar no `PickUp`.
+    Ajuste fino recomendado no Animation Editor.
+-   ~~Caixa parada durante o `PickUp`~~: **corrigido** (relato do
+    usuário: o personagem abaixava, mas a caixa ficava parada na posição
+    final).
+    -   Causa: a caixa estava soldada ao `HumanoidRootPart`, que não se
+        move com as animações.
+    -   Correção: o servidor solda a caixa à **mão direita** com um `Weld`
+        de deslocamento fixo (`ProductConfig.Carry.HoldPart` e
+        `HoldOffsetFromPart`). O deslocamento foi medido na pose
+        `CarryIdle`, de modo que, segurando, a caixa fica exatamente no
+        `HoldOffset`. Se a mão não existir, volta para a solda na raiz.
+    -   O `PickUp` agora **começa agachado** (keyframes 0 e 0,2 s
+        agachado, 0,75 s segurando; fade de entrada 0,25 s). Assim a mão,
+        e a caixa junto, começa perto do chão e sobe.
+    -   A autoridade continua no servidor (solda e deslocamento definidos
+        só nele). Soltar, repor e a posição de soltura (calculada pela
+        raiz) não mudaram.
+    -   **Testado no playtest com a tecla E:** altura da caixa em relação
+        à raiz −1,37 → −2,22 (fundo do agachamento, junto ao chão) →
+        +0,05 em 0,6 s → +0,10/−1,60 estável (= `HoldOffset`).
+        - Soltar com G colado às caixas do depósito → recusado ("Sem
+          espaço...").
+        - Virado para o chão livre → `Ok`. A caixa ficou no chão, sem
+          solda, com física do servidor e interativa.
+        - Output sem erros.
+    -   Detalhe que sobrou: no fundo do agachamento, a caixa afunda cerca
+        de 0,2 stud no chão por um instante (ajuste fino no Animation
+        Editor, no keyframe `CROUCH`).
+-   **Pulo carregando:** as poses de carregar continuam no ar (as pernas
+    não fazem a pose de pulo).
+-   Ao repor e esvaziar a caixa, o `PlaceBox` termina sem a caixa (ela
+    some na hora).
+
+### Caixa de maçãs definitiva (modelo da Loja do Criador)
+
+-   O usuário inseriu pela Loja do Criador um modelo de caixa de madeira
+    com maçãs.
+-   **Verificado antes de usar:**
+    -   **Nenhum script** no modelo.
+    -   43 peças: tábuas, cunhas e 18 maçãs.
+    -   As maçãs usam a malha clássica do catálogo da Roblox (`id=16190555`
+        e textura `16190577`), que veio junto com o modelo.
+-   **Preparado como molde** em `ServerStorage.ProductTemplates.Apple`:
+    -   Reduzido pelo fator 0,572: de 3,85 × 2,62 × 3,04 para
+        **2,2 × 1,5 × 1,74** (as malhas das maçãs foram escaladas junto).
+    -   As 18 maçãs foram marcadas com o atributo `ProductUnit` (1 a 6,
+        três maçãs por unidade). As de baixo são a unidade 1 e saem por
+        último.
+-   **Código:**
+    -   `ProductService` monta a caixa a partir do molde, se ele existir.
+        Uma peça invisível `Crate` do tamanho do molde faz toda a física
+        (colisão, solda na mão, cálculo de soltura). As tábuas e maçãs
+        são só visuais (sem colisão, sem massa, soldadas). Sem molde,
+        volta para a caixa provisória.
+    -   `ProductConfig.Box.Size` = (2,2; 1,5; 1,74), para combinar com o
+        molde (empilhamento no depósito e reserva).
+    -   `HoldOffset` = (0; 0,25; −1,65) e `HoldOffsetFromPart` remedido
+        na pose `CarryIdle`, para a caixa mais alta e mais funda ficar
+        apoiada nas mãos.
+-   **Testado no playtest:**
+    -   4 caixas criadas a partir do molde, com 18 maçãs visíveis cada e
+        empilhadas sem sobreposição (y = 0,74 e 2,19).
+    -   Pegar com E (com animação), carregar e ver de lado e de cima: a
+        caixa fica nas mãos, à frente do corpo.
+    -   Reposição parcial: prateleira 9 → 12, +3. A caixa ficou com 3
+        unidades e **9 maçãs visíveis**.
+    -   Soltar com G em área livre → caixa no chão (y = 0,74, base no
+        chão).
+    -   Output sem erros.
+-   **Prateleira com a mesma maçã:** `ShelfService` agora mostra cada
+    unidade com uma cópia da maçã do molde (`ProductService.getUnitModel`,
+    a primeira peça com `ProductUnit`), em pé, com a rotação original da
+    malha. Sem molde, volta para as esferas provisórias.
+    -   Testado no playtest: pegar e repor → "+6 maçãs (6/12)". 6 unidades
+        na bancada, com a malha `id=16190555` (0,67 × 0,64 × 0,62). Print
+        conferido. Output sem erros.
+-   **Pendência:** salvar em arquivo para o molde entrar no
+    `lobo-project.rbxl`.
+
+### Expositor de maçãs definitivo (Loja do Criador, asset 10655743934)
+
+-   **Verificado em quarentena** (`ServerStorage.Quarantine`, onde
+    scripts não rodam):
+    -   **Nenhum script.**
+    -   64 maçãs (MeshPart com a malha `6736431944`), tábuas e uma placa
+        com imagem `177575747` e o texto "Apples - 5R$".
+    -   Uma `ThumbnailCamera`, removida.
+-   **Ajustes:**
+    -   Escalado para **0,65**: de 8,1 × 9,5 × 3 para 5,26 × 6,18 × 1,95.
+        O original tinha quase o dobro da altura do lobo.
+    -   Texto da placa trocado para **"Maçãs"**. O preço sai até existir
+        economia; "5R$" não era do jogo.
+    -   Substituiu a bancada provisória no mesmo lugar (20, −6).
+-   **Estrutura:** `Workspace.Store.Shelves.AppleShelf` é uma peça
+    invisível do tamanho do expositor (tag `Interactable`, `Shelf`,
+    `ProductId = Apple`, `Capacity = 12`, com colisão). O modelo fica
+    dentro dela como `Visual` (sem colisão nem consulta). As maçãs
+    receberam `DisplayUnit` (substituído depois pelos `DisplaySlot`, ver
+    abaixo).
+-   **Código (versão final, a pedido do usuário: "quantidade exata, não
+    um amontoado"):**
+    -   As 64 maçãs amontoadas do modelo foram **removidas**.
+    -   A prateleira tem 12 Attachments `DisplaySlot` (atributo `Order`),
+        6 por andar, em fila, sobre o piso de cada andar (Y 2,05 e 3,67;
+        X de 17,9 a 21,8; Z −5,96). Dá para ajustar movendo os
+        Attachments no Studio.
+    -   `ShelfService` coloca **exatamente uma maçã por unidade em
+        estoque** (a maçã do molde da caixa), da posição 1 em diante.
+        Prateleiras sem `DisplaySlot` usam uma grade sobre o topo.
+    -   O modo proporcional (`DisplayUnit`) foi removido do código.
+    -   Testado: 0/12 → 0 maçãs; 6/12 → 6 maçãs no andar de baixo;
+        12/12 → 12 maçãs (6 + 6). Prints conferidos, Output sem erros.
+    -   Bug encontrado e corrigido no teste: as posições foram criadas
+        com `WorldPosition` antes de estarem presas à prateleira e
+        viraram deslocamento relativo (as maçãs apareceram longe). Foram
+        convertidas para coordenadas do mundo.
+-   **Testado no playtest:**
+    -   Início 0/12 → 0 maçãs visíveis.
+    -   A dica mira a prateleira ("Repor maçãs").
+    -   Repor → 6/12 → 32 maçãs (andar de baixo cheio).
+    -   Repor de novo → 12/12 → 64 maçãs.
+    -   Prints conferidos. Output do servidor e do cliente sem erros.
+-   **A cópia de quarentena foi apagada.** O expositor em uso fica na
+    loja.
+-   **Pendências:**
+    -   ~~Placa de costas~~: **corrigido**. O expositor estava de costas
+        para a loja. O `Visual` foi girado 180° em torno do centro da
+        prateleira (mesmo lugar), e a ordem `DisplayUnit` foi refeita
+        (andar de baixo, depois da frente, lado +Z, para trás). Print
+        no playtest: placa "Maçãs" com a imagem da maçã de frente e as
+        maçãs expostas para o lado do lobo. Reposição 6/12 ok.
+    -   A colisão é uma caixa inteira, então não dá para passar entre as
+        pernas do expositor.
+    -   Salvar em arquivo para entrar no `lobo-project.rbxl`.
+
+### Teste manual sugerido
+
+1.  Jogue (F5) e vá até o piso "Estoque".
+2.  Aperte E numa caixa. Aparece "Carregando caixa" e a câmera
+    aproxima.
+3.  Vá até a bancada e aperte E. As maçãs aparecem na prateleira e a
+    caixa esvazia ou some.
+4.  Pegue outra caixa e aperte G. Ela cai à sua frente.
+5.  Tente pegar uma segunda caixa com a primeira na mão. Ela não é
+    oferecida.
 
 ## Estado do projeto
 
@@ -400,12 +811,16 @@ src/client/
 -   O place agora está publicado (privado). O `StarterCharacter` e os
     modelos gerados só existem no place: é preciso salvar em arquivo para
     que entrem no Git.
--   A limpeza do protótipo antigo e a Etapa 02 ainda não foram
-    commitadas. O protótipo antigo continua no commit `12815e8`.
+-   As Etapas 01 e 02 estão commitadas (`edf1d82` e `69c12f0`). A Etapa 03
+    (com as animações, a caixa e o expositor definitivos) está na branch
+    `feat/etapa-03-produtos-transporte`. O protótipo antigo continua no
+    histórico, no commit `12815e8`.
+-   Mudanças no mapa e nos modelos (`Workspace.Store`, `ServerStorage`,
+    `StarterCharacter`) só entram no Git depois de Arquivo → Salvar em
+    arquivo.
 -   Existem duas cópias do repositório (`Desktop` e `Documents\GitHub`).
 
 ## Próxima ação autorizada
 
--   Aguardar a aprovação do personagem intermediário (v4) e a validação
-    da Etapa 02 pelo usuário. Só então executar a Etapa 03 --- Produtos,
-    transporte e física.
+-   Aguardar a validação da Etapa 03 pelo usuário. Só então executar a
+    Etapa 04 --- Clientes e vendas.

@@ -33,6 +33,8 @@ export type InteractionType = {
 	ActionText: string,
 	ObjectText: string,
 	MaxDistance: number?,
+	-- not offered while the local player is carrying something (e.g. another box)
+	HideWhileCarrying: boolean?,
 }
 
 InteractionConfig.Types = {
@@ -48,6 +50,15 @@ InteractionConfig.Types = {
 		ActionText = "Ler placa",
 		ObjectText = "Placa",
 		MaxDistance = 10,
+	},
+	ProductBox = {
+		ActionText = "Pegar caixa",
+		ObjectText = "Caixa",
+		HideWhileCarrying = true,
+	},
+	Shelf = {
+		ActionText = "Repor",
+		ObjectText = "Prateleira",
 	},
 } :: { [string]: InteractionType }
 
